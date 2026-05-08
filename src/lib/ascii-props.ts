@@ -27,6 +27,41 @@ export interface RevealEffectOptions {
     duration?: number;
 }
 
+export interface RecordingOptions {
+    mimeType?: string;
+    frameRate?: number;
+    exportScale?: number;
+    exportWidth?: number;
+    exportHeight?: number;
+    videoBitsPerSecond?: number;
+    audioBitsPerSecond?: number;
+    bitsPerSecond?: number;
+    includeAudio?: boolean;
+    timeSliceMs?: number;
+    fileName?: string;
+}
+
+export interface RecordedAsciiVideo {
+    blob: Blob;
+    url: string;
+    mimeType: string;
+    extension: 'webm' | 'mp4';
+    durationMs: number;
+}
+
+export interface RecordingControlsOptions {
+    className?: string;
+    fileName?: string;
+}
+
+export interface VideoAsciiHandle {
+    startRecording: (options?: RecordingOptions) => boolean;
+    stopRecording: () => Promise<RecordedAsciiVideo | null>;
+    downloadRecording: (recording?: RecordedAsciiVideo, fileName?: string) => void;
+    isRecording: () => boolean;
+    getLastRecording: () => RecordedAsciiVideo | null;
+}
+
 export interface Props {
     src: string | string[]; // when calling, can't use inline array directly (or else if state rerenders, it will create a new array)
     videoMode?: boolean;
@@ -40,6 +75,13 @@ export interface Props {
     clickEffect?: boolean | ClickEffectOptions;
     charMode?: 'shape' | 'luminance';
     className?: string;
+    recording?: boolean;
+    recordingOptions?: RecordingOptions;
+    downloadOnRecordingStop?: boolean;
+    recordingControls?: boolean | RecordingControlsOptions;
+    onRecordingStart?: (mimeType: string) => void;
+    onRecordingStop?: (recording: RecordedAsciiVideo) => void;
+    onRecordingError?: (error: Error) => void;
 }
 
 export interface ParsedProps {

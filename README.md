@@ -57,6 +57,61 @@ const sources = ['/video1.mp4', '/video2.mp4'];
 />
 ```
 
+### Recording and export
+
+The component can record the final ASCII canvas with the browser `MediaRecorder` API. It chooses a supported format automatically, usually WebM. To request MP4 when the browser supports it, pass `recordingOptions={{ mimeType: 'video/mp4' }}`.
+
+```tsx
+<VideoAscii
+  src="/video.mp4"
+  recordingControls
+  recordingOptions={{
+    fileName: 'ascii-export',
+    frameRate: 30,
+    exportScale: 2,
+    videoBitsPerSecond: 24000000,
+    mimeType: 'video/webm',
+  }}
+/>
+```
+
+For custom UI, use the imperative handle:
+
+```tsx
+import { useRef } from 'react';
+import { VideoAscii, type VideoAsciiHandle } from 'react-video-ascii';
+
+function Player() {
+  const asciiRef = useRef<VideoAsciiHandle>(null);
+
+  const stopAndDownload = async () => {
+    const recording = await asciiRef.current?.stopRecording();
+    if (recording) asciiRef.current?.downloadRecording(recording, 'ascii-export');
+  };
+
+  return (
+    <>
+      <VideoAscii ref={asciiRef} src="/video.mp4" />
+      <button onClick={() => asciiRef.current?.startRecording({ mimeType: 'video/mp4' })}>
+        Record
+      </button>
+      <button onClick={stopAndDownload}>Export</button>
+    </>
+  );
+}
+```
+
+You can also control recording through props:
+
+```tsx
+<VideoAscii
+  src="/video.mp4"
+  recording={isRecording}
+  downloadOnRecordingStop
+  recordingOptions={{ fileName: 'ascii-export' }}
+/>
+```
+
 > **Note 1:** When passing an array to `src`, define it outside the component or in a `useMemo`/`useRef` (an inline array literal creates a new reference on every render and will cause the video to reload).
 
 > **Note 2:** The component fills its parent container. Control size via the parent element or the `className` prop.
@@ -77,6 +132,13 @@ const sources = ['/video1.mp4', '/video2.mp4'];
 | `clickEffect` | `boolean \| ClickEffectOptions` | `true` | — | Click effects. `true` uses defaults. |
 | `revealEffect` | `boolean \| RevealEffectOptions` | `false` | — | Reveal animation on load. `true` uses defaults. |
 | `className` | `string` | — | — | CSS class on the outer container. |
+| `recording` | `boolean` | `false` | — | Controlled recording state. `true` starts recording; `false` stops. |
+| `recordingOptions` | `RecordingOptions` | — | — | Export format, bitrate, frame rate, file name, and optional audio capture. |
+| `downloadOnRecordingStop` | `boolean` | `false` | — | Automatically downloads the recording after controlled recording stops. |
+| `recordingControls` | `boolean \| RecordingControlsOptions` | `false` | — | Shows built-in Record/Stop/Export controls over the canvas. |
+| `onRecordingStart` | `(mimeType: string) => void` | — | — | Called when recording starts. |
+| `onRecordingStop` | `(recording: RecordedAsciiVideo) => void` | — | — | Called with the exported Blob and URL when recording stops. |
+| `onRecordingError` | `(error: Error) => void` | — | — | Called if recording is not supported or fails. |
 
 ---
 
@@ -118,6 +180,26 @@ Passed to `revealEffect`. All fields optional.
 |-------|------|---------|-------|-------------|
 | `type` | `'diagonal' \| 'radial' \| 'random'` | `'random'` | — | Pattern in which characters appear on load. |
 | `duration` | `number` | `0.4` | `0.1–4` | Reveal animation duration in seconds. |
+
+---
+
+### `RecordingOptions`
+
+Passed to `recordingOptions` or `startRecording`. All fields optional.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mimeType` | `string` | first supported WebM/MP4 type | Preferred export type, for example `'video/webm'` or `'video/mp4'`. |
+| `frameRate` | `number` | `30` | Frames per second captured from the ASCII canvas. |
+| `exportScale` | `number` | `1` | Multiplies the captured canvas resolution. Use `2` for sharper exports. |
+| `exportWidth` | `number` | source canvas width | Explicit export width. Height is inferred if `exportHeight` is omitted. |
+| `exportHeight` | `number` | source canvas height | Explicit export height. Width is inferred if `exportWidth` is omitted. |
+| `videoBitsPerSecond` | `number` | estimated high-quality bitrate | Video bitrate passed to `MediaRecorder`. |
+| `audioBitsPerSecond` | `number` | browser default | Audio bitrate, only used with `includeAudio`. |
+| `bitsPerSecond` | `number` | browser default | Overall bitrate passed to `MediaRecorder`. |
+| `includeAudio` | `boolean` | `false` | Attempts to include audio tracks from the source video stream. Browser support varies. |
+| `timeSliceMs` | `number` | browser default | Optional chunk interval passed to `MediaRecorder.start`. |
+| `fileName` | `string` | `'ascii-video'` | File name used by built-in or automatic download. |
 
 ---
 
