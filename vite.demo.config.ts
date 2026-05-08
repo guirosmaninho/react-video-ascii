@@ -5,7 +5,7 @@ import glsl from 'vite-plugin-glsl'
 const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1]
 const isUserSite = repoName?.endsWith('.github.io')
 const base = process.env.PAGES_BASE_PATH
-  ?? (process.env.GITHUB_PAGES && repoName && !isUserSite ? `/${repoName}/` : '/')
+  ?? (repoName && !isUserSite ? `/${repoName}/` : '/')
 
 export default defineConfig({
   base,
