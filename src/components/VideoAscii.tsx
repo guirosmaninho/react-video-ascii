@@ -130,6 +130,8 @@ function VideoAscii({
         let gridRows = 0;
         let charW = 1;
         let charH = 1;
+        let containerW = 0;
+        let containerH = 0;
 
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -174,15 +176,18 @@ function VideoAscii({
 
         // sets up new character grid based on column count
         const setupGrid = (nc: number) => {
-            charW = Math.max(1, Math.floor(canvas.width / nc)); // num pixels per char (width)
+            // use stable container dimensions to prevent cumulative shrinkage from rounding feedback
+            const baseW = containerW > 0 ? containerW : canvas.width;
+            const baseH = containerH > 0 ? containerH : canvas.height;
+            charW = Math.max(1, Math.floor(baseW / nc)); // num pixels per char (width)
             // probe and scale to find charH
             const probe = charW * 2;
             hiddenCtx.font = `${probe}px monospace`;
             // try a font size of double width, find actually how wide it is, use this as scale factor
             charH = Math.max(1, Math.round(probe * charW / hiddenCtx.measureText('M').width));
 
-            gridCols = Math.floor(canvas.width / charW);
-            gridRows = Math.floor(canvas.height / charH);
+            gridCols = Math.floor(baseW / charW);
+            gridRows = Math.floor(baseH / charH);
 
             // snap canvas to exact integer multiples (no float boundary errors) -> fill with css not with gpu
                 // only small stretch: shader crops video to canvas, canvas gets stretched to container
@@ -284,9 +289,11 @@ function VideoAscii({
         rebuildScatterAtlasRef.current = rebuildScatterAtlas;
 
         // size canvas to container display dimensions
-        const setupCanvas = (containerW: number, containerH: number) => {
-            canvas.width = Math.round(containerW);
-            canvas.height = Math.round(containerH);
+        const setupCanvas = (cw: number, ch: number) => {
+            containerW = Math.round(cw);
+            containerH = Math.round(ch);
+            canvas.width = containerW;
+            canvas.height = containerH;
             setupGrid(numColsRef.current);
 
             // center-crop video to match snapped canvas AR (avoids slight AR error from container dimensions)
