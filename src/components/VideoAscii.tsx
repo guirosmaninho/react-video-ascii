@@ -96,9 +96,10 @@ function clampRecordingDimension(value: number) {
     return Math.max(MIN_RECORDING_DIMENSION, Math.min(MAX_RECORDING_DIMENSION, Math.round(value)));
 }
 
-function resolveRecordingDimensions(canvas: HTMLCanvasElement, options: RecordingOptions) {
-    const sourceWidth = Math.max(1, canvas.width);
-    const sourceHeight = Math.max(1, canvas.height);
+function resolveRecordingDimensions(canvas: HTMLCanvasElement, options: RecordingOptions, videoWidth?: number, videoHeight?: number) {
+    // Use video dimensions if provided (to preserve original aspect ratio), otherwise use canvas
+    const sourceWidth = Math.max(1, videoWidth ?? canvas.width);
+    const sourceHeight = Math.max(1, videoHeight ?? canvas.height);
     const scale = Math.max(1, Math.min(MAX_RECORDING_SCALE, options.exportScale ?? 1));
     const hasWidth = typeof options.exportWidth === 'number' && options.exportWidth > 0;
     const hasHeight = typeof options.exportHeight === 'number' && options.exportHeight > 0;
@@ -313,7 +314,9 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         }
 
         const frameRate = Math.max(1, Math.round(mergedOptions.frameRate ?? 30));
-        const recordingSize = resolveRecordingDimensions(canvas, mergedOptions);
+        const videoWidth = video?.videoWidth || undefined;
+        const videoHeight = video?.videoHeight || undefined;
+        const recordingSize = resolveRecordingDimensions(canvas, mergedOptions, videoWidth, videoHeight);
         let stream: MediaStream;
 
         if (recordingSize.width === canvas.width && recordingSize.height === canvas.height) {
