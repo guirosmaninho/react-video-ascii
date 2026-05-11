@@ -314,8 +314,8 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         }
 
         const frameRate = Math.max(1, Math.round(mergedOptions.frameRate ?? 30));
-        const videoWidth = video?.videoWidth || undefined;
-        const videoHeight = video?.videoHeight || undefined;
+        const videoWidth = videoRef.current?.videoWidth || undefined;
+        const videoHeight = videoRef.current?.videoHeight || undefined;
         const recordingSize = resolveRecordingDimensions(canvas, mergedOptions, videoWidth, videoHeight);
         let stream: MediaStream;
 
