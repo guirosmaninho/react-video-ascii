@@ -33,6 +33,7 @@ export interface RecordingOptions {
     exportScale?: number;
     exportWidth?: number;
     exportHeight?: number;
+    aspectRatio?: number;
     videoBitsPerSecond?: number;
     audioBitsPerSecond?: number;
     bitsPerSecond?: number;

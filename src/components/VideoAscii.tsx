@@ -13,12 +13,20 @@ import { createMouseTrail } from "../lib/brighten-effect";
 import { createClickEffect } from "../lib/click-effect";
 import { createSpreadEffect } from "../lib/spread-effect";
 
-const RECORDING_MIME_CANDIDATES = [
+const WEBM_RECORDING_MIME_CANDIDATES = [
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm',
+];
+
+const MP4_RECORDING_MIME_CANDIDATES = [
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4',
+];
+
+const RECORDING_MIME_CANDIDATES = [
+    ...WEBM_RECORDING_MIME_CANDIDATES,
+    ...MP4_RECORDING_MIME_CANDIDATES,
 ];
 
 const DEFAULT_RECORDING_FILE_NAME = 'ascii-video';
@@ -68,10 +76,52 @@ const recordingErrorStyle = {
     whiteSpace: 'nowrap',
 } as const;
 
-function resolveRecordingMimeType(preferred?: string): string | null {
-    if (typeof MediaRecorder === 'undefined') return null;
-    if (preferred && MediaRecorder.isTypeSupported(preferred)) return preferred;
-    return RECORDING_MIME_CANDIDATES.find(type => MediaRecorder.isTypeSupported(type)) ?? null;
+function uniqueRecordingMimeTypes(types: string[]) {
+    return types.filter((type, index) => types.indexOf(type) === index);
+}
+
+function isMp4MimeType(mimeType: string) {
+    return mimeType.toLowerCase().includes('video/mp4');
+}
+
+function getPreferredRecordingMimeTypes(preferred?: string) {
+    const normalizedPreferred = preferred?.trim();
+    if (!normalizedPreferred) return RECORDING_MIME_CANDIDATES;
+
+    const normalizedLower = normalizedPreferred.toLowerCase();
+    if (normalizedLower === 'video/mp4') {
+        return uniqueRecordingMimeTypes([
+            ...MP4_RECORDING_MIME_CANDIDATES,
+            ...WEBM_RECORDING_MIME_CANDIDATES,
+        ]);
+    }
+    if (normalizedLower.startsWith('video/mp4')) {
+        return uniqueRecordingMimeTypes([
+            normalizedPreferred,
+            ...MP4_RECORDING_MIME_CANDIDATES,
+            ...WEBM_RECORDING_MIME_CANDIDATES,
+        ]);
+    }
+    if (normalizedLower === 'video/webm') {
+        return uniqueRecordingMimeTypes([
+            ...WEBM_RECORDING_MIME_CANDIDATES,
+            ...MP4_RECORDING_MIME_CANDIDATES,
+        ]);
+    }
+    if (normalizedLower.startsWith('video/webm')) {
+        return uniqueRecordingMimeTypes([
+            normalizedPreferred,
+            ...WEBM_RECORDING_MIME_CANDIDATES,
+            ...MP4_RECORDING_MIME_CANDIDATES,
+        ]);
+    }
+
+    return uniqueRecordingMimeTypes([normalizedPreferred, ...RECORDING_MIME_CANDIDATES]);
+}
+
+function resolveRecordingMimeTypes(preferred?: string): string[] {
+    if (typeof MediaRecorder === 'undefined') return [];
+    return getPreferredRecordingMimeTypes(preferred).filter(type => MediaRecorder.isTypeSupported(type));
 }
 
 function getRecordingExtension(mimeType: string): 'webm' | 'mp4' {
@@ -96,13 +146,65 @@ function clampRecordingDimension(value: number) {
     return Math.max(MIN_RECORDING_DIMENSION, Math.min(MAX_RECORDING_DIMENSION, Math.round(value)));
 }
 
-function resolveRecordingDimensions(canvas: HTMLCanvasElement, options: RecordingOptions, videoWidth?: number, videoHeight?: number) {
-    // Use video dimensions if provided (to preserve original aspect ratio), otherwise use canvas
-    const sourceWidth = Math.max(1, videoWidth ?? canvas.width);
-    const sourceHeight = Math.max(1, videoHeight ?? canvas.height);
+function makeEvenRecordingDimension(value: number) {
+    const dimension = clampRecordingDimension(value);
+    if (dimension % 2 === 0) return dimension;
+    return dimension >= MAX_RECORDING_DIMENSION ? dimension - 1 : dimension + 1;
+}
+
+function normalizeRecordingDimensionsForMimeType(size: { width: number; height: number }, mimeType: string) {
+    if (!isMp4MimeType(mimeType)) return size;
+    return {
+        width: makeEvenRecordingDimension(size.width),
+        height: makeEvenRecordingDimension(size.height),
+    };
+}
+
+function getVideoSourceSize(video: HTMLVideoElement | null) {
+    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) return null;
+    return {
+        width: video.videoWidth,
+        height: video.videoHeight,
+    };
+}
+
+function getCoverDrawRect(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) {
+    const sourceAspectRatio = sourceWidth / sourceHeight;
+    const targetAspectRatio = targetWidth / targetHeight;
+
+    if (sourceAspectRatio > targetAspectRatio) {
+        const drawWidth = Math.round(targetHeight * sourceAspectRatio);
+        return {
+            width: drawWidth,
+            height: targetHeight,
+            x: Math.round((targetWidth - drawWidth) / 2),
+            y: 0,
+        };
+    }
+
+    if (sourceAspectRatio < targetAspectRatio) {
+        const drawHeight = Math.round(targetWidth / sourceAspectRatio);
+        return {
+            width: targetWidth,
+            height: drawHeight,
+            x: 0,
+            y: Math.round((targetHeight - drawHeight) / 2),
+        };
+    }
+
+    return {
+        width: targetWidth,
+        height: targetHeight,
+        x: 0,
+        y: 0,
+    };
+}
+
+function resolveRecordingDimensions(sourceWidth: number, sourceHeight: number, options: RecordingOptions) {
     const scale = Math.max(1, Math.min(MAX_RECORDING_SCALE, options.exportScale ?? 1));
     const hasWidth = typeof options.exportWidth === 'number' && options.exportWidth > 0;
     const hasHeight = typeof options.exportHeight === 'number' && options.exportHeight > 0;
+    const hasAspectRatio = typeof options.aspectRatio === 'number' && options.aspectRatio > 0;
 
     if (hasWidth && hasHeight) {
         return {
@@ -112,17 +214,24 @@ function resolveRecordingDimensions(canvas: HTMLCanvasElement, options: Recordin
     }
     if (hasWidth) {
         const width = clampRecordingDimension(options.exportWidth!);
-        return {
-            width,
-            height: clampRecordingDimension(width * sourceHeight / sourceWidth),
-        };
+        const height = hasAspectRatio
+            ? clampRecordingDimension(width / options.aspectRatio!)
+            : clampRecordingDimension(width * sourceHeight / sourceWidth);
+        return { width, height };
     }
     if (hasHeight) {
         const height = clampRecordingDimension(options.exportHeight!);
-        return {
-            width: clampRecordingDimension(height * sourceWidth / sourceHeight),
-            height,
-        };
+        const width = hasAspectRatio
+            ? clampRecordingDimension(height * options.aspectRatio!)
+            : clampRecordingDimension(height * sourceWidth / sourceHeight);
+        return { width, height };
+    }
+
+    if (hasAspectRatio) {
+        // Use aspect ratio with scale
+        const width = clampRecordingDimension(sourceWidth * scale);
+        const height = clampRecordingDimension(width / options.aspectRatio!);
+        return { width, height };
     }
 
     return {
@@ -144,6 +253,52 @@ function captureVideoAudioStream(video: HTMLVideoElement | null): MediaStream | 
     };
     const captureStream = source.captureStream ?? source.mozCaptureStream;
     return captureStream ? captureStream.call(source) : null;
+}
+
+function waitForAnimationFrame() {
+    return new Promise<void>(resolve => {
+        requestAnimationFrame(() => resolve());
+    });
+}
+
+function waitForVideoSeek(video: HTMLVideoElement) {
+    if (!video.seeking && video.readyState >= 2) return Promise.resolve();
+
+    return new Promise<void>(resolve => {
+        let timeoutId = 0;
+        const cleanup = () => {
+            window.clearTimeout(timeoutId);
+            video.removeEventListener('seeked', onReady);
+            video.removeEventListener('loadeddata', onReady);
+            video.removeEventListener('canplay', onReady);
+        };
+        const onReady = () => {
+            cleanup();
+            resolve();
+        };
+
+        timeoutId = window.setTimeout(onReady, 2000);
+        video.addEventListener('seeked', onReady, { once: true });
+        video.addEventListener('loadeddata', onReady, { once: true });
+        video.addEventListener('canplay', onReady, { once: true });
+    });
+}
+
+async function restartVideoFromBeginning(video: HTMLVideoElement) {
+    video.pause();
+    if (!Number.isFinite(video.duration) || video.duration > 0) {
+        try {
+            video.currentTime = 0;
+        } catch {
+            if (typeof video.fastSeek === 'function') video.fastSeek(0);
+        }
+    }
+    await waitForVideoSeek(video);
+}
+
+function requestCaptureFrame(stream: MediaStream) {
+    const [track] = stream.getVideoTracks() as CanvasCaptureMediaStreamTrack[];
+    track?.requestFrame?.();
 }
 
 const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
@@ -179,6 +334,9 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
     const recordingStreamRef = useRef<MediaStream | null>(null);
     const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const recordingFrameCopyRef = useRef<(() => void) | null>(null);
+    const prepareRecordingFrameRef = useRef<(() => Promise<boolean>) | null>(null);
+    const recordingStartPendingRef = useRef(false);
+    const recordingStartTokenRef = useRef(0);
     const recordingStopResolverRef = useRef<((recording: RecordedAsciiVideo | null) => void) | null>(null);
     const recordingStopPromiseRef = useRef<Promise<RecordedAsciiVideo | null> | null>(null);
     const recordingOptionsRef = useRef<RecordingOptions | undefined>(recordingOptions);
@@ -294,7 +452,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
     }, []);
 
     const startRecording = useCallback((options?: RecordingOptions) => {
-        if (recorderRef.current && recorderRef.current.state !== 'inactive') return true;
+        if (recordingStartPendingRef.current || (recorderRef.current && recorderRef.current.state !== 'inactive')) return true;
 
         const canvas = canvasRef.current;
         if (!canvas || typeof canvas.captureStream !== 'function') {
@@ -305,25 +463,31 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             reportRecordingError(new Error('The ASCII canvas is not ready yet.'));
             return false;
         }
-
-        const mergedOptions = { ...recordingOptionsRef.current, ...options };
-        const mimeType = resolveRecordingMimeType(mergedOptions.mimeType);
-        if (!mimeType) {
-            reportRecordingError(new Error('This browser does not support WebM or MP4 recording through MediaRecorder.'));
+        const prepareRecordingFrame = prepareRecordingFrameRef.current;
+        if (!prepareRecordingFrame) {
+            reportRecordingError(new Error('The ASCII renderer is not ready yet.'));
             return false;
         }
 
-        const frameRate = Math.max(1, Math.round(mergedOptions.frameRate ?? 30));
-        const videoWidth = videoRef.current?.videoWidth || undefined;
-        const videoHeight = videoRef.current?.videoHeight || undefined;
-        const recordingSize = resolveRecordingDimensions(canvas, mergedOptions, videoWidth, videoHeight);
-        let stream: MediaStream;
+        const mergedOptions = { ...recordingOptionsRef.current, ...options };
+        const mimeTypes = resolveRecordingMimeTypes(mergedOptions.mimeType);
+        if (mimeTypes.length === 0) {
+            reportRecordingError(new Error('This browser does not support WebM or MP4 recording through MediaRecorder.'));
+            return false;
+        }
+        const preferredMimeType = mimeTypes[0];
 
-        if (recordingSize.width === canvas.width && recordingSize.height === canvas.height) {
-            stream = canvas.captureStream(frameRate);
-            recordingFrameCopyRef.current = null;
-            recordingCanvasRef.current = null;
-        } else {
+        const frameRate = Math.max(1, Math.round(mergedOptions.frameRate ?? 30));
+        const sourceSize = getVideoSourceSize(videoRef.current);
+        if (!sourceSize) {
+            reportRecordingError(new Error('The source video is not ready yet.'));
+            return false;
+        }
+        const recordingSize = normalizeRecordingDimensionsForMimeType(
+            resolveRecordingDimensions(sourceSize.width, sourceSize.height, mergedOptions),
+            preferredMimeType,
+        );
+        const beginRecording = () => {
             const recordingCanvas = document.createElement('canvas');
             recordingCanvas.width = recordingSize.width;
             recordingCanvas.height = recordingSize.height;
@@ -333,32 +497,58 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
                 return false;
             }
             recordingCtx.imageSmoothingEnabled = false;
+            recordingCtx.fillStyle = 'black';
+            recordingCtx.fillRect(0, 0, recordingSize.width, recordingSize.height);
+
+            const drawRect = getCoverDrawRect(canvas.width, canvas.height, recordingSize.width, recordingSize.height);
             const copyFrame = () => {
-                recordingCtx.drawImage(canvas, 0, 0, recordingSize.width, recordingSize.height);
+                recordingCtx.fillStyle = 'black';
+                recordingCtx.fillRect(0, 0, recordingSize.width, recordingSize.height);
+                recordingCtx.drawImage(canvas, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
             };
             copyFrame();
             recordingCanvasRef.current = recordingCanvas;
             recordingFrameCopyRef.current = copyFrame;
-            stream = recordingCanvas.captureStream(frameRate);
-        }
+            const stream = recordingCanvas.captureStream(frameRate);
 
-        if (mergedOptions.includeAudio) {
-            captureVideoAudioStream(videoRef.current)?.getAudioTracks().forEach(track => {
-                stream.addTrack(track);
-            });
-        }
+            if (mergedOptions.includeAudio) {
+                captureVideoAudioStream(videoRef.current)?.getAudioTracks().forEach(track => {
+                    stream.addTrack(track);
+                });
+            }
 
-        const mediaRecorderOptions: MediaRecorderOptions = { mimeType };
-        const videoBitsPerSecond = mergedOptions.videoBitsPerSecond
-            ?? (mergedOptions.bitsPerSecond ? undefined : estimateRecordingBitrate(recordingSize.width, recordingSize.height, frameRate));
-        if (videoBitsPerSecond) mediaRecorderOptions.videoBitsPerSecond = videoBitsPerSecond;
-        if (mergedOptions.audioBitsPerSecond) mediaRecorderOptions.audioBitsPerSecond = mergedOptions.audioBitsPerSecond;
-        if (mergedOptions.bitsPerSecond) mediaRecorderOptions.bitsPerSecond = mergedOptions.bitsPerSecond;
+            const videoBitsPerSecond = mergedOptions.videoBitsPerSecond
+                ?? (mergedOptions.bitsPerSecond ? undefined : estimateRecordingBitrate(recordingSize.width, recordingSize.height, frameRate));
+            const createMediaRecorderOptions = (mimeType: string): MediaRecorderOptions => {
+                const mediaRecorderOptions: MediaRecorderOptions = { mimeType };
+                if (videoBitsPerSecond) mediaRecorderOptions.videoBitsPerSecond = videoBitsPerSecond;
+                if (mergedOptions.audioBitsPerSecond) mediaRecorderOptions.audioBitsPerSecond = mergedOptions.audioBitsPerSecond;
+                if (mergedOptions.bitsPerSecond) mediaRecorderOptions.bitsPerSecond = mergedOptions.bitsPerSecond;
+                return mediaRecorderOptions;
+            };
 
-        try {
-            const recorder = new MediaRecorder(stream, mediaRecorderOptions);
+            try {
+                let recorder: MediaRecorder | null = null;
+                let recorderMimeType = preferredMimeType;
+                let startError: unknown = null;
+
+            for (const mimeType of mimeTypes) {
+                try {
+                    recorder = new MediaRecorder(stream, createMediaRecorderOptions(mimeType));
+                    recorderMimeType = recorder.mimeType || mimeType;
+                    break;
+                } catch (error) {
+                    startError = error;
+                }
+            }
+
+            if (!recorder) {
+                throw startError instanceof Error ? startError : new Error('The ASCII video recorder could not start.');
+            }
+
+            let recordingFailed = false;
             recordingChunksRef.current = [];
-            recordingMimeTypeRef.current = mimeType;
+            recordingMimeTypeRef.current = recorderMimeType;
             recordingStartTimeRef.current = performance.now();
             recordingStreamRef.current = stream;
             recorderRef.current = recorder;
@@ -371,7 +561,23 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
                 const error = maybeError.error instanceof Error
                     ? maybeError.error
                     : new Error('The ASCII video recorder failed.');
+                recordingFailed = true;
                 reportRecordingError(error);
+                if (recorder.state !== 'inactive') {
+                    try {
+                        recorder.stop();
+                    } catch {
+                        stream.getTracks().forEach(track => track.stop());
+                        recordingFrameCopyRef.current = null;
+                        recordingCanvasRef.current = null;
+                        recordingStreamRef.current = null;
+                        recorderRef.current = null;
+                        setIsRecording(false);
+                        recordingStopResolverRef.current?.(null);
+                        recordingStopResolverRef.current = null;
+                        recordingStopPromiseRef.current = null;
+                    }
+                }
             };
             recorder.onstop = () => {
                 stream.getTracks().forEach(track => track.stop());
@@ -382,7 +588,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
                 setIsRecording(false);
 
                 const blob = new Blob(recordingChunksRef.current, { type: recordingMimeTypeRef.current });
-                const recordingResult = blob.size > 0
+                const recordingResult = !recordingFailed && blob.size > 0
                     ? {
                         blob,
                         url: URL.createObjectURL(blob),
@@ -407,9 +613,13 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             };
 
             recorder.start(mergedOptions.timeSliceMs);
+            requestCaptureFrame(stream);
+            void videoRef.current?.play().catch(error => {
+                reportRecordingError(error instanceof Error ? error : new Error('The source video could not resume for recording.'));
+            });
             setRecordingError(null);
             setIsRecording(true);
-            onRecordingStartRef.current?.(mimeType);
+            onRecordingStartRef.current?.(recorderMimeType);
             return true;
         } catch (error) {
             stream.getTracks().forEach(track => track.stop());
@@ -420,9 +630,55 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             reportRecordingError(error instanceof Error ? error : new Error('The ASCII video recorder could not start.'));
             return false;
         }
+        };
+
+        const startToken = recordingStartTokenRef.current + 1;
+        recordingStartTokenRef.current = startToken;
+        recordingStartPendingRef.current = true;
+        setRecordingError(null);
+        setIsRecording(true);
+        const resumeSourceVideo = () => {
+            void videoRef.current?.play().catch(() => undefined);
+        };
+
+        void (async () => {
+            let prepared = false;
+            let prepareError: Error | null = null;
+            try {
+                prepared = await prepareRecordingFrame();
+            } catch (error) {
+                prepareError = error instanceof Error ? error : new Error('The source video could not be rewound for recording.');
+                reportRecordingError(prepareError);
+            }
+
+            if (recordingStartTokenRef.current !== startToken) return;
+
+            recordingStartPendingRef.current = false;
+            if (!prepared) {
+                setIsRecording(false);
+                resumeSourceVideo();
+                if (!prepareError) reportRecordingError(new Error('The source video could not be prepared for recording.'));
+                return;
+            }
+
+            if (!beginRecording()) {
+                setIsRecording(false);
+                resumeSourceVideo();
+            }
+        })();
+
+        return true;
     }, [reportRecordingError]);
 
     const stopRecording = useCallback(() => {
+        if (recordingStartPendingRef.current) {
+            recordingStartTokenRef.current += 1;
+            recordingStartPendingRef.current = false;
+            setIsRecording(false);
+            void videoRef.current?.play().catch(() => undefined);
+            return Promise.resolve(null);
+        }
+
         const recorder = recorderRef.current;
         if (!recorder || recorder.state === 'inactive') return Promise.resolve(null);
         if (recordingStopPromiseRef.current) return recordingStopPromiseRef.current;
@@ -444,7 +700,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         startRecording,
         stopRecording,
         downloadRecording,
-        isRecording: () => !!recorderRef.current && recorderRef.current.state !== 'inactive',
+        isRecording: () => recordingStartPendingRef.current || (!!recorderRef.current && recorderRef.current.state !== 'inactive'),
         getLastRecording: () => lastRecordingRef.current,
     }), [downloadRecording, startRecording, stopRecording]);
 
@@ -459,6 +715,9 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
 
     useEffect(() => () => {
         const recorder = recorderRef.current;
+        recordingStartTokenRef.current += 1;
+        recordingStartPendingRef.current = false;
+        prepareRecordingFrameRef.current = null;
         recorderRef.current = null;
         recordingFrameCopyRef.current = null;
         recordingCanvasRef.current = null;
@@ -521,6 +780,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         let lastTime = -1;
         let startTime = -1;
         let currentVidIndex = 0;
+        let disposed = false;
 
         const sources = Array.isArray(src) ? src : [src];
         const isMultiSource = sources.length > 1;
@@ -696,7 +956,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         };
         canvas.addEventListener("click", onClick);
 
-        const loop = () => {
+        const drawFrame = (flush = false) => {
             // update dynamic uniforms per frame
             gl.uniform1i(resources.videoModeLoc, videoModeRef.current ? 1 : 0);
             gl.uniform1f(resources.brightnessLoc, brightnessRef.current);
@@ -737,8 +997,33 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
                 gl.useProgram(program);
             }
             gl.drawArrays(gl.TRIANGLES, 0, 6);
+            if (flush) gl.finish();
             recordingFrameCopyRef.current?.();
+        };
+
+        const loop = () => {
+            drawFrame();
             animFrameId = requestAnimationFrame(loop);
+        };
+
+        prepareRecordingFrameRef.current = async () => {
+            if (disposed || !loadedRef.current || video.readyState < 2) return false;
+
+            const prepareToken = recordingStartTokenRef.current;
+            lastTime = -1;
+            await restartVideoFromBeginning(video);
+            if (disposed || recordingStartTokenRef.current !== prepareToken || !loadedRef.current || video.readyState < 2) return false;
+
+            startTime = performance.now();
+            lastTime = -1;
+            drawFrame(true);
+            await waitForAnimationFrame();
+            if (disposed || recordingStartTokenRef.current !== prepareToken || !loadedRef.current || video.readyState < 2) return false;
+
+            startTime = performance.now();
+            lastTime = -1;
+            drawFrame(true);
+            return true;
         };
 
         const onLoaded = () => {
@@ -784,9 +1069,11 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         }
 
         return () => {
+            disposed = true;
             ro.disconnect();
             setupGridRef.current = null;
             rebuildScatterAtlasRef.current = null;
+            prepareRecordingFrameRef.current = null;
             loadedRef.current = false;
             cancelAnimationFrame(animFrameId);
             video.removeEventListener("loadeddata", onLoaded);
