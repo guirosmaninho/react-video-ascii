@@ -339,6 +339,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
     const recordingStartTokenRef = useRef(0);
     const recordingStopResolverRef = useRef<((recording: RecordedAsciiVideo | null) => void) | null>(null);
     const recordingStopPromiseRef = useRef<Promise<RecordedAsciiVideo | null> | null>(null);
+    const retriggerRevealRef = useRef<(() => void) | null>(null);
     const recordingOptionsRef = useRef<RecordingOptions | undefined>(recordingOptions);
     const downloadOnRecordingStopRef = useRef(downloadOnRecordingStop);
     const onRecordingStartRef = useRef(onRecordingStart);
@@ -378,10 +379,17 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
     const spreadEnabledRef = useRef(spreadEnabled);
     const spreadExpandDurationRef = useRef(spreadExpandDuration);
     const spreadSpeedRef = useRef(spreadSpeed);
+    const revealEnabledRef = useRef(revealEnabled);
+    const revealDurationRef = useRef(revealDuration);
+    const revealEffectFlagRef = useRef(revealEffectFlag);
     const numColsRef = useRef(numCols);
     const videoModeRef = useRef(videoMode);
     // update refs inside useEffect (not in render) -> avoids unintentional errors
     useEffect(() => {
+        const previousRevealEnabled = revealEnabledRef.current;
+        const previousRevealDuration = revealDurationRef.current;
+        const previousRevealEffectFlag = revealEffectFlagRef.current;
+
         brightnessRef.current = brightness;
         saturationRef.current = saturation;
         bgOpacityRef.current = bgOpacity;
@@ -407,8 +415,22 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         spreadEnabledRef.current = spreadEnabled;
         spreadExpandDurationRef.current = spreadExpandDuration;
         spreadSpeedRef.current = spreadSpeed;
+        revealEnabledRef.current = revealEnabled;
+        revealDurationRef.current = revealDuration;
+        revealEffectFlagRef.current = revealEffectFlag;
         numColsRef.current = numCols;
         videoModeRef.current = videoMode;
+
+        if (
+            loadedRef.current
+            && (
+                previousRevealEnabled !== revealEnabled
+                || previousRevealDuration !== revealDuration
+                || previousRevealEffectFlag !== revealEffectFlag
+            )
+        ) {
+            retriggerRevealRef.current?.();
+        }
     }, [
         brightness,
         saturation,
@@ -429,6 +451,9 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         spreadEnabled,
         spreadExpandDuration,
         spreadSpeed,
+        revealEnabled,
+        revealDuration,
+        revealEffectFlag,
         numCols,
         videoMode,
     ]);
@@ -700,6 +725,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         startRecording,
         stopRecording,
         downloadRecording,
+        retriggerReveal: () => retriggerRevealRef.current?.(),
         isRecording: () => recordingStartPendingRef.current || (!!recorderRef.current && recorderRef.current.state !== 'inactive'),
         getLastRecording: () => lastRecordingRef.current,
     }), [downloadRecording, startRecording, stopRecording]);
@@ -767,7 +793,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
         scatterAtlasTextureRef.current = resources.scatterAtlasTexture;
 
         gl.uniform1i(resources.shapeMatchingLoc, charMode === 'shape' ? 1 : 0);
-        gl.uniform1i(resources.revealEffectFlagLoc, revealEffectFlag);
+        gl.uniform1i(resources.revealEffectFlagLoc, revealEnabledRef.current ? revealEffectFlagRef.current : 0);
         gl.uniform1f(resources.revealProgressLoc, 0.0);
 
         // create effect handlers
@@ -969,9 +995,12 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             gl.uniform1f(resources.mouseBrightnessLoc, mouseBrightnessRef.current);
             gl.uniform1f(resources.mouseRadiusLoc, Math.min(canvas.width, canvas.height) * mouseRadiusRef.current);
 
-            if (revealEnabled) {
-                const progress = startTime < 0 ? 0.0 : Math.min(1.0, (performance.now() - startTime) / (revealDuration * 1000));
+            if (revealEnabledRef.current) {
+                gl.uniform1i(resources.revealEffectFlagLoc, revealEffectFlagRef.current);
+                const progress = startTime < 0 ? 0.0 : Math.min(1.0, (performance.now() - startTime) / (revealDurationRef.current * 1000));
                 gl.uniform1f(resources.revealProgressLoc, progress);
+            } else {
+                gl.uniform1i(resources.revealEffectFlagLoc, 0);
             }
 
             if (loadedRef.current && video.currentTime != lastTime && video.readyState >= 2) {
@@ -1000,6 +1029,17 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             if (flush) gl.finish();
             recordingFrameCopyRef.current?.();
         };
+
+        const retriggerReveal = () => {
+            startTime = performance.now();
+            lastTime = -1;
+            gl.useProgram(program);
+            gl.uniform1f(resources.revealProgressLoc, 0.0);
+            if (loadedRef.current && video.readyState >= 2) {
+                drawFrame(true);
+            }
+        };
+        retriggerRevealRef.current = retriggerReveal;
 
         const loop = () => {
             drawFrame();
@@ -1074,6 +1114,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             setupGridRef.current = null;
             rebuildScatterAtlasRef.current = null;
             prepareRecordingFrameRef.current = null;
+            if (retriggerRevealRef.current === retriggerReveal) retriggerRevealRef.current = null;
             loadedRef.current = false;
             cancelAnimationFrame(animFrameId);
             video.removeEventListener("loadeddata", onLoaded);
@@ -1099,7 +1140,7 @@ const VideoAscii = forwardRef<VideoAsciiHandle, Props>(function VideoAscii({
             gl.deleteTexture(resources.scatterStateTexture);
             gl.deleteTexture(resources.spreadStateTexture);
         };
-    }, [src, charMode, chars, revealEffectFlag, revealDuration, revealEnabled]);
+    }, [src, charMode, chars]);
 
     return (
         <div ref={containerRef} className={className} style={{ height: '100%', width: '100%', position: 'relative' }}>

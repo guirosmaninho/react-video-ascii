@@ -328,7 +328,6 @@ function Demo() {
     const [uploadActive, setUploadActive] = useState(false);
     const [uploadedName, setUploadedName] = useState<string | null>(null);
     const [recordingStatus, setRecordingStatus] = useState('ready');
-    const [recordingNonce, setRecordingNonce] = useState(0);
 
     useEffect(() => () => {
         if (uploadUrlRef.current) URL.revokeObjectURL(uploadUrlRef.current);
@@ -389,7 +388,6 @@ function Demo() {
             <div className="ascii-fill">
                 <VideoAscii
                     ref={asciiRef}
-                    key={recordingNonce}
                     src={settings.src}
                     videoMode={settings.videoMode}
                     numColsRaw={settings.numColsRaw}
@@ -551,7 +549,7 @@ function Demo() {
                                     <ControlRow label="duration">
                                         <Slider min={0.1} max={4} step={0.1} value={settings.revealDuration} onChange={value => update('revealDuration', value)} format={fixed1} />
                                     </ControlRow>
-                                    <button type="button" className="retrigger-btn" onClick={() => setRecordingNonce(value => value + 1)}>
+                                    <button type="button" className="retrigger-btn" onClick={() => asciiRef.current?.retriggerReveal?.()}>
                                         retrigger
                                     </button>
                                 </>

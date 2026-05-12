@@ -59,6 +59,7 @@ export interface VideoAsciiHandle {
     startRecording: (options?: RecordingOptions) => boolean;
     stopRecording: () => Promise<RecordedAsciiVideo | null>;
     downloadRecording: (recording?: RecordedAsciiVideo, fileName?: string) => void;
+    retriggerReveal?: () => void;
     isRecording: () => boolean;
     getLastRecording: () => RecordedAsciiVideo | null;
 }
